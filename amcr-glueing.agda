@@ -1,17 +1,31 @@
-{-# OPTIONS --rewriting #-}
+{-# OPTIONS --safe --without-K #-}
 module amcr-glueing where
 
+-- >> PRELUDE
 open import Agda.Builtin.Equality
-open import Agda.Builtin.Equality.Rewrite
 
 record UNIT : Set where constructor *
+
 data VOID : Set where
+
 data BOOL : Set where tt ff : BOOL
+
 record SIGMA (A : Set) (B : A → Set) : Set where
   field
     proj₁ : A
     proj₂ : B proj₁
 open SIGMA public
+
+data SUM (A B : Set) : Set where
+  inl : A → SUM A B
+  inr : B → SUM A B
+
+record PROD (A B : Set) : Set where
+  constructor _,_
+  field
+    π₀ : A
+    π₁ : B
+open PROD public
 
 cong : {A B : Set} (f : A → B) {x y : A} → x ≡ y → f x ≡ f y
 cong f refl = refl
@@ -27,20 +41,10 @@ trans refl refl = refl
 
 sym : {A : Set} {x y : A} → x ≡ y → y ≡ x
 sym refl = refl
-
-data _⊎_ (A B : Set) : Set where
-  inl : A → A ⊎ B
-  inr : B → A ⊎ B
-
-record _×_ (A B : Set) : Set where
-  constructor _,_
-  field
-    π₀ : A
-    π₁ : B
-open _×_ public
+-- << PRELUDE
 
 infix 7 _⇒_
-infixl 6 _▸_
+infixl 6 _▸_ _▸⁺_ _▸⁻_
 infixl 5 _∙_ 
 infix 5 _∋_ _⊇_
 infix 4 _⊢_ _⊢ᵏ_ _⊢ᵛ_
@@ -52,22 +56,13 @@ data Ty : Set where
 data Ty′ : Set where
   t⁺ t⁻ : Ty → Ty′
 
-flip : Ty′ → Ty′
-flip (t⁺ t) = t⁻ t
-flip (t⁻ t) = t⁺ t
-
-flip-flip : ∀ {σ′} → flip (flip σ′) ≡ σ′
-flip-flip {t⁺ _} = refl
-flip-flip {t⁻ _} = refl
-{-# REWRITE flip-flip #-}
-
 data Env : Set where
   ∅   : Env
   _▸_ : Env → Ty′ → Env
 
-_▸+_ : Env → Env → Env
-Γ ▸+ ∅       = Γ
-Γ ▸+ (Δ ▸ σ) = (Γ ▸+ Δ) ▸ σ
+_▸⁺_ _▸⁻_ : Env → Ty → Env
+Γ ▸⁺ σ = Γ ▸ t⁺ σ
+Γ ▸⁻ σ = Γ ▸ t⁻ σ
 
 private variable
   σ τ : Ty
@@ -92,8 +87,8 @@ data _⊢_ where
   var   : (Γ ∋ σ′) → (Γ ⊢ σ′)
 
   -- values
-  lam  : (Γ ▸ t⁺ σ ⊢ᵛ τ) → (Γ ⊢ᵛ (σ ⇒ τ))
-  mu   : state (Γ ▸ t⁻ σ) → (Γ ⊢ᵛ σ)
+  lam  : (Γ ▸⁺ σ ⊢ᵛ τ) → (Γ ⊢ᵛ (σ ⇒ τ))
+  mu   : state (Γ ▸⁻ σ) → (Γ ⊢ᵛ σ)
   tt   : Γ ⊢ᵛ 𝔹
   ff   : Γ ⊢ᵛ 𝔹
   inl  : (Γ ⊢ᵛ σ) → (Γ ⊢ᵛ (σ ⊕ τ))
@@ -103,7 +98,7 @@ data _⊢_ where
   -- continuations
   _∙_  : (Γ ⊢ᵛ σ) → (Γ ⊢ᵏ τ ) → (Γ ⊢ᵏ (σ ⇒ τ))
   ite  : state Γ → state Γ → (Γ ⊢ᵏ 𝔹)
-  case : state (Γ ▸ t⁺ σ) → state (Γ ▸ t⁺ τ) → (Γ ⊢ᵏ (σ ⊕ τ))
+  case : state (Γ ▸⁺ σ) → state (Γ ▸⁺ τ) → (Γ ⊢ᵏ (σ ⊕ τ))
   bot  : (Γ ⊢ᵏ ⊥)
   fst  : (Γ ⊢ᵏ σ) → (Γ ⊢ᵏ (σ & τ))
   snd  : (Γ ⊢ᵏ τ) → (Γ ⊢ᵏ (σ & τ))
@@ -150,18 +145,6 @@ data _⊇_ : Env → Env → Set where
 ⊇-idʳ (skip r) = cong skip (⊇-idʳ r)
 ⊇-idʳ (keep r) = cong keep (⊇-idʳ r)
 
-⊇-keep : (Γ₂ ⊇ Γ₁) → (Γ₂ ▸+ Γ₃) ⊇ (Γ₁ ▸+ Γ₃)
-⊇-keep {Γ₃ = ∅}     r = r
-⊇-keep {Γ₃ = Γ₃ ▸ _} r = keep (⊇-keep r)
-
-⊇+ˡ : Γ₁ ▸+ Γ₂ ⊇ Γ₁
-⊇+ˡ {Γ₂ = ∅}       = ⊇-refl
-⊇+ˡ {Γ₂ = Γ₂ ▸ _} = skip ⊇+ˡ
-
-⊇+ʳ : Γ₁ ▸+ Γ₂ ⊇ Γ₂
-⊇+ʳ {Γ₂ = ∅}       = ⊇-∅
-⊇+ʳ {Γ₂ = Γ₂ ▸ _} = keep ⊇+ʳ
-
 ren∋ : Γ₂ ⊇ Γ₁ → Γ₁ ∋ σ′ → Γ₂ ∋ σ′
 ren∋ (skip r) i       = pop (ren∋ r i)
 ren∋ (keep r) top     = top
@@ -178,28 +161,10 @@ ren∋-∘ (skip r) (keep s) {i}     = cong pop (ren∋-∘ r s)
 ren∋-∘ (keep r) (keep s) {top}   = refl
 ren∋-∘ (keep r) (keep s) {pop i} = cong pop (ren∋-∘ r s)
 
-case∋ : (Γ₁ ▸+ Γ₂) ∋ σ′ → (Γ₁ ∋ σ′) ⊎ (Γ₂ ∋ σ′)
-case∋ {Γ₂ = ∅}       i = inl i
-case∋ {Γ₂ = Γ₂ ▸ x} top     = inr top
-case∋ {Γ₂ = Γ₂ ▸ x} (pop i) with case∋ i
-... | inl j = inl j
-... | inr j = inr (pop j)
-
-case∋-inv : (Γ₁ ∋ σ′) ⊎ (Γ₂ ∋ σ′) → (Γ₁ ▸+ Γ₂) ∋ σ′
-case∋-inv (inl j) = ren∋ ⊇+ˡ j
-case∋-inv (inr j) = ren∋ ⊇+ʳ j
-
-case∋-ren∋ : (i : (Γ₁ ▸+ Γ₂) ∋ σ′) → case∋-inv (case∋ {Γ₁} {Γ₂} i) ≡ i
-case∋-ren∋ {Γ₂ = ∅} i = ren∋-id
-case∋-ren∋ {Γ₂ = Γ₂ ▸ x} top = refl
-case∋-ren∋ {Γ₂ = Γ₂ ▸ x} (pop i) with case∋ {Γ₂ = Γ₂} i in eq
-... | inl j = cong pop (trans (sym (cong case∋-inv eq)) (case∋-ren∋ {Γ₂ = Γ₂} i))
-... | inr j = cong pop (trans (sym (cong case∋-inv eq)) (case∋-ren∋ {Γ₂ = Γ₂} i))
-
 ren : (Γ₂ ⊇ Γ₁) → Γ₁ ⊢ σ′ → Γ₂ ⊢ σ′
 ren-cmd : (Γ₂ ⊇ Γ₁) → state Γ₁ → state Γ₂
 
-ren r (var i)    = var (ren∋ (⊇-keep r) i)
+ren r (var i)    = var (ren∋ r i)
 ren r (lam a)    = lam (ren (keep r) a)
 ren r (mu a)     = mu (ren-cmd (keep r) a)
 ren r tt         = tt
@@ -255,37 +220,23 @@ ren-∘ r s (snd a) = cong snd (ren-∘ r s a)
 
 ren-cmd-∘ r s ⟨ v ∥ k ⟩ = cong₂ ⟨_∥_⟩ (ren-∘ r s v) (ren-∘ r s k)
 
-∀[_] : (Env → Set) → Set
-∀[ P ] = ∀ {Γ} → P Γ 
-
-{-
-_⊢ᵢ_ : (Env → Set) → (Env → Set) → (Env → Set)
-(P ⊢ᵢ Q) Γ = P Γ → Q Γ
--}
-
 record Sem₁ : Set₁ where
   field
     fam : Env → Set
     renᶠ : Γ₂ ⊇ Γ₁ → fam Γ₁ → fam Γ₂
 open Sem₁ public
 
-_⊢₁_ : Sem₁ → Sem₁ → (Env → Set)
-(P ⊢₁ Q) Γ = fam P Γ → fam Q Γ
-
+-- morphisms
 infix 4 _⊆₁_
 _⊆₁_ : Sem₁ → Sem₁ → Set
-P ⊆₁ Q = ∀[ P ⊢₁ Q ]
-
-□_ : (Env → Set) → Sem₁
-fam (□ P) Γ₁ = ∀ {Γ₂} → Γ₂ ⊇ Γ₁ → P Γ₂ 
-renᶠ (□ P) r f r′ = f (⊇-∘ r r′)
+P ⊆₁ Q = ∀ {Γ} → fam P Γ → fam Q Γ
 
 _×₁_ : Sem₁ → Sem₁ → Sem₁
-fam (P ×₁ Q) Γ = fam P Γ × fam Q Γ
+fam (P ×₁ Q) Γ = PROD (fam P Γ) (fam Q Γ)
 renᶠ (P ×₁ Q) r p = renᶠ P r (π₀ p) , renᶠ Q r (π₁ p)
 
 _+₁_ : Sem₁ → Sem₁ → Sem₁
-fam (P +₁ Q) Γ = fam P Γ ⊎ fam Q Γ
+fam (P +₁ Q) Γ = SUM (fam P Γ) (fam Q Γ)
 renᶠ (P +₁ Q) r (inl p) = inl (renᶠ P r p)
 renᶠ (P +₁ Q) r (inr p) = inr (renᶠ Q r p)
 
@@ -293,22 +244,21 @@ renᶠ (P +₁ Q) r (inr p) = inr (renᶠ Q r p)
 fam (κ A) _ = A
 renᶠ (κ A) r a = a
 
+-- >> pair of 'polarized' families
 record Sem₂ : Set₁ where
   field
     pos : Sem₁
     neg : Sem₁
 open Sem₂ public
 
+-- information ordering
 infix 4 _⊆₂_
 _⊆₂_ : Sem₂ → Sem₂ → Set
-P ⊆₂ Q = (pos P ⊆₁ pos Q) × (neg P ⊆₁ neg Q)
+P ⊆₂ Q = PROD (pos P ⊆₁ pos Q) (neg P ⊆₁ neg Q)
 
+-- subtype ordering
 _≼₂_ : Sem₂ → Sem₂ → Set
-P ≼₂ Q = (pos P ⊆₁ pos Q) × (neg Q ⊆₁ neg P)
-
-swap : Sem₂ → Sem₂
-pos (swap P) = neg P
-neg (swap P) = pos P
+P ≼₂ Q = PROD (pos P ⊆₁ pos Q) (neg Q ⊆₁ neg P)
 
 module adequacy (paul : Sem₁) where
 
@@ -317,20 +267,30 @@ module adequacy (paul : Sem₁) where
   fam (P ⫫) Γ₁ = ∀ {Γ₂} → Γ₂ ⊇ Γ₁ → fam P Γ₂ → fam paul Γ₂
   renᶠ (P ⫫) r f r′ = f (⊇-∘ r r′)
 
+  -- contrapositive for information ordering
   contra : ∀ P Q → P ⊆₁ Q → Q ⫫ ⊆₁ P ⫫
   contra P Q f q r p = q r (f p)
 
+  -- double orthogonal introduction
   ⫫⫫ᵢ : ∀ P → P ⊆₁ P ⫫ ⫫
   ⫫⫫ᵢ P p r k = k ⊇-refl (renᶠ P r p)
 
+  -- triple orthogonal elimination
   ⫫⫫⫫ₑ : ∀ P → P ⫫ ⫫ ⫫ ⊆₁ P ⫫
   ⫫⫫⫫ₑ P = contra P (P ⫫ ⫫) (⫫⫫ᵢ P)
 
+  -- soundness property
   Sound : Sem₂ → Set
   Sound S = (pos S ×₁ neg S) ⊆₁ paul
 
+  -- completeness property
   Complete : Sem₂ → Set
-  Complete S = (neg S ⫫ ⊆₁ pos S) × (pos S ⫫ ⊆₁ neg S)
+  Complete S = PROD (neg S ⫫ ⊆₁ pos S) (pos S ⫫ ⊆₁ neg S)
+
+  -- >> swap: flipping the polarity of a polarized predicate-pair
+  swap : Sem₂ → Sem₂
+  pos (swap P) = neg P
+  neg (swap P) = pos P
 
   swap-sound : ∀ P → Sound P → Sound (swap P)
   swap-sound P H (a , b) = H (b , a)
@@ -338,9 +298,12 @@ module adequacy (paul : Sem₁) where
   swap-complete : ∀ P → Complete P → Complete (swap P)
   π₀ (swap-complete P H) = π₁ H
   π₁ (swap-complete P H) = π₀ H
+  -- << swap lemma
 
-  close : (P : Sem₁) → Sem₂
-  pos (close P) = (P ⫫) ⫫
+  -- >> orthogonal 'closure': takes a predicate and makes it into a
+  -- polarized predicate-pair
+  close : Sem₁ → Sem₂
+  pos (close P) = P ⫫ ⫫
   neg (close P) = P ⫫
 
   close-sound : ∀ P → Sound (close P)
@@ -348,7 +311,9 @@ module adequacy (paul : Sem₁) where
 
   close-complete : ∀ P → Complete (close P)
   close-complete P = (λ k → k) , ⫫⫫⫫ₑ P
+  -- << orthogonal closure
 
+  -- >> semantic types
   _⟦⇒⟧_ : Sem₂ → Sem₂ → Sem₂
   S ⟦⇒⟧ T = swap (close (pos S ×₁ neg T))
 
@@ -370,7 +335,9 @@ module adequacy (paul : Sem₁) where
   ⟦ σ ⇒ τ ⟧T = ⟦ σ ⟧T ⟦⇒⟧ ⟦ τ ⟧T
   ⟦ σ ⊕ τ  ⟧T = ⟦ σ ⟧T ⟦⊕⟧ ⟦ τ ⟧T
   ⟦ σ & τ  ⟧T = ⟦ σ ⟧T ⟦&⟧ ⟦ τ ⟧T
+  -- << semantic types
 
+  -- >> orthogonality of interpretation of types
   ⟦_⟧T-sound : ∀ σ → Sound ⟦ σ ⟧T
   ⟦ 𝔹      ⟧T-sound = close-sound (κ BOOL)
   ⟦ ⊥      ⟧T-sound = swap-sound (close _) (close-sound (κ UNIT))
@@ -384,18 +351,23 @@ module adequacy (paul : Sem₁) where
   ⟦ σ ⇒ τ ⟧T-complete = swap-complete (close (pos ⟦ σ ⟧T ×₁ neg ⟦ τ ⟧T)) (close-complete (pos ⟦ σ ⟧T ×₁ neg ⟦ τ ⟧T))
   ⟦ σ ⊕ τ  ⟧T-complete = close-complete (pos ⟦ σ ⟧T +₁ pos ⟦ τ ⟧T)
   ⟦ σ & τ  ⟧T-complete = swap-complete (close (neg ⟦ σ ⟧T +₁ neg ⟦ τ ⟧T)) (close-complete (neg ⟦ σ ⟧T +₁ neg ⟦ τ ⟧T))
+  -- << orthogonality of interpretation of types
 
+  -- now we're interpreting everything back into non-polarized predicates:
+  -- polarized types will choose the corresponding polarity of a pair
   ⟦_⟧T′ : Ty′ → Sem₁
   ⟦ t⁺ σ ⟧T′ = pos ⟦ σ ⟧T
   ⟦ t⁻ σ ⟧T′ = neg ⟦ σ ⟧T
 
+  -- environnements are interpreted as n-ary products
   ⟦_⟧E : Env → Sem₁
   ⟦ ∅       ⟧E = κ UNIT
   ⟦ Γ ▸ σ′ ⟧E = ⟦ Γ ⟧E ×₁ ⟦ σ′ ⟧T′
   
-  ⟦∋⟧ : Γ ∋ σ′ → ⟦ Γ ⟧E ⊆₁ ⟦ σ′ ⟧T′
-  ⟦∋⟧ top     p = π₁ p
-  ⟦∋⟧ (pop i) p = ⟦∋⟧ i (π₀ p)
+  -- semantic interptetion of variables
+  ⟦var⟧ : Γ ∋ σ′ → ⟦ Γ ⟧E ⊆₁ ⟦ σ′ ⟧T′
+  ⟦var⟧ top     p = π₁ p
+  ⟦var⟧ (pop i) p = ⟦var⟧ i (π₀ p)
   
   _⊩_ : Env → Ty′ → Set
   Γ ⊩ σ′ = ⟦ Γ ⟧E ⊆₁ ⟦ σ′ ⟧T′
@@ -406,7 +378,7 @@ module adequacy (paul : Sem₁) where
   adequacy : Γ ⊢ σ′ → Γ ⊩ σ′
   adequacy-cmd : state Γ → Γ ⊩c
 
-  adequacy {Γ} {σ′}          (var i)                = ⟦∋⟧ i
+  adequacy {Γ} {σ′}          (var i)                = ⟦var⟧ i
   adequacy {Γ} {t⁺ (σ ⇒ τ)} (lam a)    e r (v , k) = ⟦ τ ⟧T-sound (adequacy a (renᶠ ⟦ Γ ⟧E r e , v) , k)
   adequacy {Γ} {t⁺ σ}        (mu a)     e           = π₀ ⟦ σ ⟧T-complete (λ r k → adequacy-cmd a (renᶠ ⟦ Γ ⟧E r e , k))
   adequacy {Γ} {t⁺ 𝔹}        tt         e r k       = k ⊇-refl tt
